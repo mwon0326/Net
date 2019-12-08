@@ -1,5 +1,7 @@
 #include "login.h"
 
+int con = 0;
+
 int recvn(SOCKET s, char *buf, int len, int flags)
 {
 	int received;
@@ -46,9 +48,6 @@ int TCP_Login()
 	retval = connect(sock, (SOCKADDR *)&serveraddr, sizeof(serveraddr));
 	if (retval == SOCKET_ERROR) err_quit("connect()");
 
-	int optval = 1;
-	retval = setsockopt(sock, SOL_SOCKET, SO_RCVBUF, (char*)optval, sizeof(optval));
-
 	// 데이터 통신에 사용할 변수
 	char buf[BUFSIZE + 1];
 	int len;
@@ -74,8 +73,10 @@ int TCP_Login()
 			break;
 		}
 
+		int rBuf;
+
 		// 데이터 받기
-		retval = recvn(sock, buf, retval, 0);
+		retval = recvn(sock, (char*)&rBuf, sizeof(int), 0);
 		if (retval == SOCKET_ERROR) {
 			err_display("recv()");
 			break;
@@ -83,16 +84,20 @@ int TCP_Login()
 		else if (retval == 0)
 			break;
 
-		buf[retval] = '\0';
-
-		if (strcmp(buf, "0") == 0)
+		if (rBuf == 0)
 		{
 			printf("일치합니다. 게임을 시작합니다.\n");
 			break;
 		}
-		else
+		else if (rBuf == 1)
 		{
 			printf("불일치\n비밀번호를 다시 입력해주세요\n");
+		}
+		else
+		{
+			printf("방 참가를 거부방했습니다.\n");
+			con = 1;
+			break;
 		}
 	}
 
@@ -101,5 +106,5 @@ int TCP_Login()
 
 	// 윈속 종료
 	WSACleanup();
-	return 0;
+	return con;
 }

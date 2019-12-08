@@ -1,35 +1,13 @@
-#define _WINSOCK_DEPRECATED_NO_WARNINGS // 최신 VC++ 컴파일 시 경고 방지
-#pragma comment(lib, "ws2_32")
-#include <winsock2.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <ws2tcpip.h>
+#include "UDP_Server.h"
 
-#define BUFSIZE    512
-#define MULTICASTIP "235.7.8.9"
-#define LOCALPORT 9000
-#define REMOTEPORT  9000
+SOCKET sock;
+SOCKADDR_IN serveraddr;
+int matrix[2][20][20];
+int other, x, y;
+int end = -1;
 
-int matrix[2][20][20] = { 0 };
-bool a1 = true;
-bool a2 = false;
-
+SOCKET m_sock; // multicast용 sock
 SOCKADDR_IN remoteaddr;
-SOCKADDR_IN peeraddr;
-int addrlen;
-SOCKET s_sock;
-SOCKET r_sock;
-struct ip_mreq mreq;
-
-struct DataPack {
-	int game_end;
-	int m_x;
-	int m_y;
-	int m_other;
-};
-
-int game_end(int other, int x, int y);
 
 // 소켓 함수 오류 출력 후 종료
 void err_quit(char *msg)
@@ -58,140 +36,7 @@ void err_display(char *msg)
 	LocalFree(lpMsgBuf);
 }
 
-int main(int argc, char *argv[])
-{
-	int retval;
-
-	unsigned int yes = 1;
-	// 윈속 초기화
-	WSADATA wsa;
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-		return 1;
-
-	// 소켓 주소 구조체 초기화(보내기 용)
-	ZeroMemory(&remoteaddr, sizeof(remoteaddr));
-	remoteaddr.sin_family = AF_INET;
-	remoteaddr.sin_addr.s_addr = inet_addr(MULTICASTIP);
-	remoteaddr.sin_port = htons(REMOTEPORT);
-
-	// socket() // 수신용 소켓
-	r_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	if (r_sock == INVALID_SOCKET) err_quit("socket()");
-
-	// 멀티캐스트 그룹 가입
-	mreq.imr_multiaddr.s_addr = inet_addr(MULTICASTIP);
-	mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-	retval = setsockopt(r_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
-		(char *)&mreq, sizeof(mreq));
-	if (retval == SOCKET_ERROR) err_quit("setsockopt()");
-
-	if (setsockopt(r_sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes)) < 0)
-		return 1;
-
-	// bind()
-	SOCKADDR_IN localaddr;
-	ZeroMemory(&localaddr, sizeof(localaddr));
-	localaddr.sin_family = AF_INET;
-	localaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	localaddr.sin_port = htons(LOCALPORT);
-	retval = bind(r_sock, (SOCKADDR *)&localaddr, sizeof(localaddr));
-	if (retval == SOCKET_ERROR) err_quit("bind()");
-
-	// socket() // 메세지 보내기
-	s_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	if (s_sock == INVALID_SOCKET) err_quit("socket()");
-
-	// 데이터 통신에 사용할 변수
-	SOCKADDR_IN clientaddr;
-	int addrlen;
-	char buf[BUFSIZE + 1];
-	DataPack sendBuf;
-	DataPack recvBuf;
-
-	int turn = 1;
-
-	// 클라이언트와 데이터 통신
-	while (1) {
-
-		if (turn % 2 == 1)
-		{
-			// 데이터 받기
-			addrlen = sizeof(clientaddr);
-
-			int recvlen;
-			int recvRetval = recvfrom(r_sock, (char *)&recvlen, sizeof(int), 0,
-				(SOCKADDR *)&clientaddr, &addrlen);
-			if (recvRetval == SOCKET_ERROR) {
-				err_display("recvfrom()");
-				continue;
-			}
-
-			int getSize;
-			char suBuffer[BUFSIZE];
-			DataPack* data;
-			getSize = recvfrom(r_sock, suBuffer, recvlen, 0, (SOCKADDR *)&clientaddr, &addrlen);
-			if (getSize == SOCKET_ERROR) {
-				err_display("recvfrom()");
-				continue;
-			}
-
-			suBuffer[getSize] = '\0';
-			data = (DataPack*)suBuffer;
-			recvBuf = *data;
-
-			printf("[UDP / %s:%d] %d\n", inet_ntoa(clientaddr.sin_addr),
-				ntohs(clientaddr.sin_port), recvBuf.m_other);
-
-			if (recvBuf.m_other == 5)
-			{
-				if (a1)
-				{
-					sendBuf.m_other = 0;
-					a1 = false;
-					a2 = true;
-				}
-				else if (a2)
-				{
-					sendBuf.m_other = 1;
-					a2 = false;
-				}
-			}
-			else
-			{
-				matrix[recvBuf.m_other][(recvBuf.m_x + 1) / 2][recvBuf.m_y] = 1;
-				sendBuf.game_end = game_end(recvBuf.m_other, recvBuf.m_x, recvBuf.m_y);
-			}
-		}
-		else
-		{
-			// 데이터 보내기
-			int len = sizeof(sendBuf);
-			retval = sendto(s_sock, (char*)&len, sizeof(int), 0,
-				(SOCKADDR *)&clientaddr, sizeof(clientaddr));
-			if (retval == SOCKET_ERROR) {
-				err_display("sendto()");
-				continue;
-			}
-
-			retval = sendto(s_sock, (char*)&sendBuf, sizeof(DataPack), 0,
-				(SOCKADDR *)&clientaddr, sizeof(clientaddr));
-			if (retval == SOCKET_ERROR) {
-				err_display("sendto()");
-				continue;
-			}
-		}
-	}
-
-	// closesocket()
-	closesocket(r_sock);
-	closesocket(s_sock);
-
-	// 윈속 종료
-	WSACleanup();
-	return 0;
-}
-
-int game_end(int other, int x, int y)
+int Game_End(int other, int x, int y)
 {
 	int count = 0;
 	//가로 5개
@@ -209,7 +54,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -225,7 +70,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -241,7 +86,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -257,7 +102,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -273,7 +118,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -289,7 +134,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -305,7 +150,7 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 
 	count++;
@@ -321,7 +166,179 @@ int game_end(int other, int x, int y)
 		}
 
 		if (count == 5)
-			return (other + 1);
+			return (other + 2);
 	}
 	return 0; //게임이 안 끝났으면 0 반환
+}
+
+int Set_UDP()
+{
+	int retval;
+
+	// 윈속 초기화
+	WSADATA wsa;
+	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+		return 1;
+
+	// socket()
+	sock = socket(AF_INET, SOCK_DGRAM, 0);		// udp 소켓 생성 
+	if (sock == INVALID_SOCKET) err_quit("socket()");
+
+	// bind()
+	serveraddr;
+	ZeroMemory(&serveraddr, sizeof(serveraddr));
+	serveraddr.sin_family = AF_INET;
+	serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);		// 모든 ip로부터 수신
+	serveraddr.sin_port = htons(SERVERPORT);
+	retval = bind(sock, (SOCKADDR *)&serveraddr, sizeof(serveraddr));	// udp 서비스 완료
+	if (retval == SOCKET_ERROR) err_quit("bind()");
+}
+
+int Multi_Set()
+{
+	int retval;
+
+	// 윈속 초기화
+	WSADATA wsa;
+	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+		return 1;
+
+	// socket()
+	m_sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock == INVALID_SOCKET) err_quit("socket()");
+
+	// 멀티캐스트 TTL 설정
+	int ttl = 2;
+	retval = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_TTL,
+		(char *)&ttl, sizeof(ttl));
+	if (retval == SOCKET_ERROR) err_quit("setsockopt()");
+
+	// 소켓 주소 구조체 초기화
+	remoteaddr;
+	ZeroMemory(&remoteaddr, sizeof(remoteaddr));
+	remoteaddr.sin_family = AF_INET;
+	remoteaddr.sin_addr.s_addr = inet_addr(MULTICASTIP);
+	remoteaddr.sin_port = htons(REMOTEPORT);
+
+	return 0;
+}
+
+int main()
+{
+	Set_UDP();
+	Multi_Set();
+
+	// 데이터 통신에 사용할 변수
+	SOCKADDR_IN clientaddr;
+	int addrlen;
+	char buf[100];
+	int turn = 0;
+	DataPack* data;
+	DataPack recvBuf;
+	DataPack sendBuf;
+	bool a1 = true;
+	bool a2 = false;
+	other = -1;
+	x = -1;
+	y = -1;
+	end = -1;
+
+	while (1)
+	{
+		int addrlen = sizeof(clientaddr);
+		int recvlen;
+		int recvRetval = recvfrom(sock, (char *)&recvlen, sizeof(int), 0,
+			(SOCKADDR *)&clientaddr, &addrlen);
+		if (recvRetval == SOCKET_ERROR) {
+			err_display("recvfrom()");
+			return 2;
+		}
+
+		int getSize = recvfrom(sock, buf, recvlen, 0, (SOCKADDR *)&clientaddr, &addrlen);
+		if (getSize == SOCKET_ERROR) {
+			err_display("recvfrom()");
+			return 2;
+		}
+
+		buf[getSize] = '\0';
+		data = (DataPack*)buf;
+
+		recvBuf = *data;
+
+		sendBuf.game_end = end;
+		sendBuf.m_other = other;
+		sendBuf.m_x = x;
+		sendBuf.m_y = y;
+
+		if (recvBuf.m_other == 5)
+		{
+			if (a1)
+			{
+				sendBuf.m_other = 0;
+				a1 = false;
+				a2 = true;
+			}
+			else if (a2)
+			{
+				sendBuf.m_other = 1;
+				a2 = false;
+			}
+			sendBuf.game_end = 5;
+		}
+
+		if (recvBuf.m_other != 6 )
+		{
+			end = recvBuf.game_end;
+			other = recvBuf.m_other;
+			x = recvBuf.m_x;
+			y = recvBuf.m_y;
+
+			if (recvBuf.m_other != 5)
+			{
+				int judgment = Game_End(other, x, y);
+				judgment += recvBuf.m_other;
+
+				char b[513];
+				sprintf_s(b, "%d", judgment);
+
+				int l = strlen(b);
+				b[l] = '\0';
+
+				int m_retval = sendto(m_sock, b, 512, 0,
+					(SOCKADDR *)&remoteaddr, sizeof(remoteaddr));
+				if (m_retval == SOCKET_ERROR) {
+					err_display("sendto()");
+					return 2;
+				}
+
+				if (recvBuf.m_x > 0 && recvBuf.m_y > 0 && recvBuf.m_other < 2)
+					matrix[recvBuf.m_other][(recvBuf.m_x + 1) / 2][recvBuf.m_y] = 1;
+			}
+		}
+
+		// 클라이언트 데이터 보내기
+		int len = sizeof(sendBuf);
+		int retval = sendto(sock, (char*)&len, sizeof(int), 0,
+			(SOCKADDR *)&clientaddr, sizeof(clientaddr));
+		if (retval == SOCKET_ERROR) {
+			err_display("sendto()");
+			return 2;
+		}
+
+		retval = sendto(sock, (char*)&sendBuf, sizeof(DataPack), 0,
+			(SOCKADDR *)&clientaddr, sizeof(clientaddr));
+		if (retval == SOCKET_ERROR) {
+			err_display("sendto()");
+			return 2;
+		}
+	}
+
+	// closesocket()
+	closesocket(sock);
+	closesocket(m_sock);
+
+	// 윈속 종료
+	WSACleanup();
+
+	return 0;
 }

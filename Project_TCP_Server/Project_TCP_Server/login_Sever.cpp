@@ -1,5 +1,8 @@
 #include "login_Server.h"
 
+int clientCount = 0;
+char password[30];
+
 // 소켓 함수 오류 출력 후 종료
 void err_quit(char *msg)
 {
@@ -36,6 +39,8 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 	int addrlen;
 	char buf[BUFSIZE + 1];
 	char sendBuf[BUFSIZE + 1];
+	int sBuf;
+
 	// 클라이언트 정보 얻기
 	addrlen = sizeof(clientaddr);
 	getpeername(client_sock, (SOCKADDR *)&clientaddr, &addrlen);
@@ -50,20 +55,22 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 		else if (retval == 0)
 			break;
 
-		// 받은 데이터 출력
 		buf[retval] = '\0';
-		printf("[TCP/%s:%d] %s\n", inet_ntoa(clientaddr.sin_addr),
-			ntohs(clientaddr.sin_port), buf);
 
-		if (strcmp(buf, "mmm") == 0)
+		if (strcmp(buf, password) == 0)
 		{
-			strcpy_s(sendBuf, "0");
+			sBuf = 0;
 		}
 		else
-			strcpy_s(sendBuf, "1");
+		{
+			sBuf = 1;
+		}
+
+		if (clientCount > 2)
+			sBuf = 2;
 
 		// 데이터 보내기
-		retval = send(client_sock, sendBuf, retval, 0);
+		retval = send(client_sock, (char*)&sBuf, sizeof(int), 0);
 		if (retval == SOCKET_ERROR) {
 			err_display("send()");
 			break;
@@ -72,14 +79,28 @@ DWORD WINAPI ProcessClient(LPVOID arg)
 
 	// closesocket()
 	closesocket(client_sock);
-	printf("[TCP 서버] 클라이언트 종료: IP 주소=%s, 포트 번호=%d\n",
-		inet_ntoa(clientaddr.sin_addr), ntohs(clientaddr.sin_port));
 
 	return 0;
 }
 
-int Login()
+int main()
 {
+	while (1)
+	{
+		printf("30자 이내로 비밀번호를 설정해주세요 : ");
+		if (fgets(password, 30, stdin) == NULL)
+		{
+			printf("다시 입력해주세요.\n");
+			continue;
+		}
+
+		int len = strlen(password);
+		if (password[len - 1] == '\n')
+			password[len - 1] = '\0';
+
+		break;
+	}
+
 	int retval;
 
 	// 윈속 초기화
@@ -104,9 +125,6 @@ int Login()
 	retval = listen(listen_sock, SOMAXCONN);
 	if (retval == SOCKET_ERROR) err_quit("listen()");
 
-	int optval = 1;
-	retval = setsockopt(listen_sock, SOL_SOCKET, SO_SNDBUF, (char*)optval, sizeof(optval));
-
 	// 데이터 통신에 사용할 변수
 	SOCKET client_sock;
 	SOCKADDR_IN clientaddr;
@@ -122,12 +140,12 @@ int Login()
 			break;
 		}
 
-		// 접속한 클라이언트 정보 출력
-		printf("\n[TCP 서버] 클라이언트 접속: IP 주소=%s, 포트 번호=%d\n",
-			inet_ntoa(clientaddr.sin_addr), ntohs(clientaddr.sin_port));
+		clientCount++;
+		printf("참가 인원 : %d\n", clientCount);
 
 		// 스레드 생성
 		hThread = CreateThread(NULL, 0, ProcessClient, (LPVOID)client_sock, 0, NULL);
+
 		if (hThread == NULL) 
 		{ 
 			closesocket(client_sock); 
